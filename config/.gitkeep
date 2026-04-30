@@ -1,0 +1,2 @@
+# This directory holds bootstrap-outputs.env (generated at runtime).
+# That file contains AWS credentials and is git-ignored.

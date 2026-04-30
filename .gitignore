@@ -1,0 +1,20 @@
+# Runtime secrets — never commit
+config/bootstrap-outputs.env
+config/*.env
+
+# OS / editor noise
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Python (Prowler deps)
+__pycache__/
+*.pyc
+.venv/
+
+# Report outputs (can be large)
+cis-reports/
+*.log
