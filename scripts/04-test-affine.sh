@@ -1,13 +1,14 @@
 #!/bin/bash
 # =============================================================================
-# 04-test-affine.sh
+# 04-test-affine.sh  (v2.2)
 # Runs automated checks against a running AFFiNE demo instance.
-# Run from your LOCAL machine or from the EC2 instance itself.
+# Run from your LOCAL machine (WSL/macOS/Linux).
+# Docker-level checks run on EC2 via SSH automatically.
 #
 # Usage:
-#   ./04-test-affine.sh --host <IP_or_domain> [--skip-tls-verify]
+#   ./04-test-affine.sh [--host <IP_or_domain>] [--skip-tls-verify]
 # =============================================================================
-set -euo pipefail
+set -eo pipefail
 
 HOST=""
 SKIP_TLS=""
@@ -21,15 +22,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [ -z "$HOST" ]; then
-  # Try loading from config
-  ENV_FILE="$(dirname "$0")/../config/bootstrap-outputs.env"
-  [ -f "$ENV_FILE" ] && source "$ENV_FILE" && HOST="$EIP"
+# Load config
+ENV_FILE="$(dirname "$0")/../config/bootstrap-outputs.env"
+if [ -f "$ENV_FILE" ]; then
+  source "$ENV_FILE"
+  HOST="${HOST:-$EIP}"
 fi
 
 if [ -z "$HOST" ]; then
   echo "Usage: $0 --host <IP_or_domain> [--skip-tls-verify]"
   exit 1
+fi
+
+# SSH setup for remote Docker checks
+EC2_USER="${EC2_USER:-ec2-user}"
+KEY_FILE="${KEY_FILE:-}"
+SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes -o LogLevel=ERROR"
+REMOTE="${EC2_USER}@${HOST}"
+SSH_AVAILABLE=false
+if [ -n "$KEY_FILE" ] && [ -f "$KEY_FILE" ]; then
+  if ssh -i "$KEY_FILE" $SSH_OPTS "$REMOTE" "echo ok" &>/dev/null; then
+    SSH_AVAILABLE=true
+  fi
 fi
 
 BASE="https://${HOST}"
@@ -83,13 +97,14 @@ echo " Target: $BASE"
 echo " Time:   $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 echo "========================================================"
 
-# ── 1. Infrastructure checks (from EC2) ───────────────────────────────────────
+# ── 1. Docker service health (via SSH) ────────────────────────────────────────
 echo ""
 echo "── 1. Docker service health ──────────────────────────────"
-if command -v docker &>/dev/null; then
+if $SSH_AVAILABLE; then
   for svc in affine_server affine_postgres affine_redis; do
-    STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$svc" 2>/dev/null || \
-             docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
+    STATUS=$(ssh -i "$KEY_FILE" $SSH_OPTS "$REMOTE" \
+      "docker inspect --format='{{.State.Health.Status}}' $svc 2>/dev/null || \
+       docker inspect --format='{{.State.Status}}' $svc 2>/dev/null || echo 'not found'")
     if [ "$STATUS" = "healthy" ] || [ "$STATUS" = "running" ]; then
       echo -e "  \033[1;32m[PASS]\033[0m $svc — $STATUS"
       ((PASS++))
@@ -99,7 +114,7 @@ if command -v docker &>/dev/null; then
     fi
   done
 else
-  echo -e "  \033[1;33m[SKIP]\033[0m Docker not available on this machine — run on EC2 for service checks"
+  echo -e "  \033[1;33m[SKIP]\033[0m SSH not available — cannot reach EC2 for Docker checks"
   ((WARN++))
 fi
 
@@ -171,30 +186,31 @@ else
   ((WARN++))
 fi
 
-# ── 7. PostgreSQL check (from EC2) ───────────────────────────────────────────
+# ── 7. PostgreSQL check (via SSH) ────────────────────────────────────────────
 echo ""
 echo "── 7. PostgreSQL + pgvector ──────────────────────────────"
-if command -v docker &>/dev/null; then
-  PG_VER=$(docker exec affine_postgres psql -U affine -d affine \
-    -t -c "SELECT version();" 2>/dev/null | head -1 | xargs || echo "")
-  check "PostgreSQL is accessible"  "$PG_VER" "PostgreSQL"
+if $SSH_AVAILABLE; then
+  PG_VER=$(ssh -i "$KEY_FILE" $SSH_OPTS "$REMOTE" \
+    "docker exec affine_postgres psql -U affine -d affine -t -c 'SELECT version();' 2>/dev/null | head -1 | xargs" || echo "")
+  check "PostgreSQL is accessible" "$PG_VER" "PostgreSQL"
 
-  VEC=$(docker exec affine_postgres psql -U affine -d affine \
-    -t -c "SELECT extname FROM pg_extension WHERE extname='vector';" 2>/dev/null | xargs || echo "")
-  check "pgvector extension installed"  "$VEC" "vector"
+  VEC=$(ssh -i "$KEY_FILE" $SSH_OPTS "$REMOTE" \
+    "docker exec affine_postgres psql -U affine -d affine -t -c \"SELECT extname FROM pg_extension WHERE extname='vector';\" 2>/dev/null | xargs" || echo "")
+  check "pgvector extension installed" "$VEC" "vector"
 else
-  echo -e "  \033[1;33m[SKIP]\033[0m Run on EC2 for PostgreSQL checks"
+  echo -e "  \033[1;33m[SKIP]\033[0m SSH not available — cannot reach EC2 for PostgreSQL checks"
   ((WARN+=2))
 fi
 
-# ── 8. Redis check (from EC2) ────────────────────────────────────────────────
+# ── 8. Redis check (via SSH) ─────────────────────────────────────────────────
 echo ""
 echo "── 8. Redis ──────────────────────────────────────────────"
-if command -v docker &>/dev/null; then
-  PING=$(docker exec affine_redis redis-cli ping 2>/dev/null || echo "")
+if $SSH_AVAILABLE; then
+  PING=$(ssh -i "$KEY_FILE" $SSH_OPTS "$REMOTE" \
+    "docker exec affine_redis redis-cli ping 2>/dev/null" || echo "")
   check "Redis responds to PING" "$PING" "PONG"
 else
-  echo -e "  \033[1;33m[SKIP]\033[0m Run on EC2 for Redis checks"
+  echo -e "  \033[1;33m[SKIP]\033[0m SSH not available — cannot reach EC2 for Redis checks"
   ((WARN++))
 fi
 
