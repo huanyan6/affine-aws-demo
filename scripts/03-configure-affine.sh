@@ -12,7 +12,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../config/bootstrap-outputs.env"
+
+# Locate bootstrap-outputs.env — works whether run locally (scripts/) or from /opt/affine/
+if [ -f "$SCRIPT_DIR/../config/bootstrap-outputs.env" ]; then
+  source "$SCRIPT_DIR/../config/bootstrap-outputs.env"
+elif [ -f "$SCRIPT_DIR/bootstrap-outputs.env" ]; then
+  source "$SCRIPT_DIR/bootstrap-outputs.env"
+else
+  echo "ERROR: bootstrap-outputs.env not found in $SCRIPT_DIR/../config/ or $SCRIPT_DIR/" >&2
+  exit 1
+fi
 
 info()  { echo -e "\n\033[1;36m[INFO]\033[0m $*"; }
 ok()    { echo -e "\033[1;32m[OK]\033[0m $*"; }
