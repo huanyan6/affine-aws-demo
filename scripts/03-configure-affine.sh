@@ -101,22 +101,26 @@ info "Writing .env on EC2..."
 ssh $SSH_OPTS "$REMOTE" "cat > ~/affine.env" <<EOF
 # AFFiNE demo environment — generated $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Server
+# AFFiNE version
+AFFINE_REVISION=stable
+PORT=3010
+
+# Volume paths on EC2
+UPLOAD_LOCATION=$AFFINE_DIR/storage
+CONFIG_LOCATION=$AFFINE_DIR/config
+DB_DATA_LOCATION=$AFFINE_DIR/db
+
+# Database
+DB_USERNAME=affine
+DB_PASSWORD=${POSTGRES_PASSWORD}
+DB_DATABASE=affine
+
+# AFFiNE server
 NODE_ENV=production
 AFFINE_SERVER_HTTPS=true
 AFFINE_SERVER_HOST=0.0.0.0
-AFFINE_SERVER_PORT=3010
 AFFINE_SERVER_EXTERNAL_URL=${PROTOCOL}://${PUBLIC_HOST}
 AFFINE_SECRET=${AFFINE_SECRET}
-AFFINE_CONFIG_PATH=/root/.affine/config
-
-# Database
-DATABASE_URL=postgresql://affine:${POSTGRES_PASSWORD}@postgres:5432/affine
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-
-# Redis
-REDIS_SERVER_HOST=redis
-REDIS_SERVER_PORT=6379
 
 # S3 storage
 STORAGE_PROVIDER=aws-s3
@@ -127,71 +131,91 @@ AWS_SECRET_ACCESS_KEY=${AFFINE_AWS_SECRET_KEY}
 
 # Disable telemetry for demo
 TELEMETRY_ENABLE=false
+AFFINE_INDEXER_ENABLED=false
 EOF
 ssh $SSH_OPTS "$REMOTE" "sudo mv ~/affine.env $AFFINE_DIR/.env && sudo chmod 600 $AFFINE_DIR/.env && sudo chown ${EC2_USER}:${EC2_USER} $AFFINE_DIR/.env"
 ok ".env written"
 
+info "Creating AFFiNE data directories on EC2..."
+ssh $SSH_OPTS "$REMOTE" "sudo mkdir -p $AFFINE_DIR/storage $AFFINE_DIR/config $AFFINE_DIR/db && sudo chown -R ${EC2_USER}:${EC2_USER} $AFFINE_DIR"
+ok "Directories created"
+
 info "Writing docker-compose.yml on EC2..."
 ssh $SSH_OPTS "$REMOTE" 'cat > ~/docker-compose.yml' <<'COMPOSE'
-version: "3.9"
+name: affine
 
 services:
   affine:
-    image: ghcr.io/toeverything/affine-graphql:stable
+    image: ghcr.io/toeverything/affine:${AFFINE_REVISION:-stable}
     container_name: affine_server
     restart: unless-stopped
     ports:
-      - "3010:3010"
-    env_file: .env
+      - "${PORT:-3010}:3010"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      affine_migration:
+        condition: service_completed_successfully
     volumes:
-      - affine_config:/root/.affine/config
-      - affine_storage:/root/.affine/storage
+      - ${UPLOAD_LOCATION}:/root/.affine/storage
+      - ${CONFIG_LOCATION}:/root/.affine/config
+    env_file: .env
+    environment:
+      - REDIS_SERVER_HOST=redis
+      - DATABASE_URL=postgresql://${DB_USERNAME}:${DB_PASSWORD}@postgres:5432/${DB_DATABASE:-affine}
+      - AFFINE_INDEXER_ENABLED=false
+
+  affine_migration:
+    image: ghcr.io/toeverything/affine:${AFFINE_REVISION:-stable}
+    container_name: affine_migration_job
+    volumes:
+      - ${UPLOAD_LOCATION}:/root/.affine/storage
+      - ${CONFIG_LOCATION}:/root/.affine/config
+    command: ['sh', '-c', 'node ./scripts/self-host-predeploy.js']
+    env_file: .env
+    environment:
+      - REDIS_SERVER_HOST=redis
+      - DATABASE_URL=postgresql://${DB_USERNAME}:${DB_PASSWORD}@postgres:5432/${DB_DATABASE:-affine}
+      - AFFINE_INDEXER_ENABLED=false
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["sh", "-c", "node ./scripts/self-host-predeploy && node ./dist/index.js"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3010/info"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
   postgres:
     image: pgvector/pgvector:pg16
     container_name: affine_postgres
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: affine
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: affine
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ${DB_DATA_LOCATION}:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_DATABASE:-affine}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+      POSTGRES_HOST_AUTH_METHOD: trust
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U affine -d affine"]
+      test: ['CMD', 'pg_isready', '-U', "${DB_USERNAME}", '-d', "${DB_DATABASE:-affine}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: redis
     container_name: affine_redis
     restart: unless-stopped
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', '--raw', 'incr', 'ping']
       interval: 10s
-      timeout: 3s
-      retries: 3
+      timeout: 5s
+      retries: 5
 
 volumes:
-  affine_config:
-  affine_storage:
-  postgres_data:
   redis_data:
 COMPOSE
 ssh $SSH_OPTS "$REMOTE" "sudo mv ~/docker-compose.yml $AFFINE_DIR/docker-compose.yml && sudo chown ${EC2_USER}:${EC2_USER} $AFFINE_DIR/docker-compose.yml"
@@ -263,28 +287,21 @@ fi
 info "Pulling Docker images and starting AFFiNE stack..."
 ssh $SSH_OPTS "$REMOTE" "cd $AFFINE_DIR && docker compose pull && docker compose up -d"
 
-info "Waiting for AFFiNE to become healthy (up to 3 min)..."
-for i in $(seq 1 36); do
-  STATUS=$(ssh $SSH_OPTS "$REMOTE" "docker inspect --format='{{.State.Health.Status}}' affine_server 2>/dev/null || echo starting")
-  if [ "$STATUS" = "healthy" ]; then
-    ok "AFFiNE is healthy!"
+info "Waiting for AFFiNE to respond on port 3010 (migration + startup may take 3-5 min)..."
+for i in $(seq 1 60); do
+  STATUS=$(ssh $SSH_OPTS "$REMOTE" "curl -sf http://localhost:3010/info -o /dev/null && echo ok || echo waiting")
+  if [ "$STATUS" = "ok" ]; then
+    ok "AFFiNE is up and responding!"
     break
   fi
-  if [ "$i" -eq 36 ]; then
-    warn "AFFiNE did not reach healthy state in 3 min — check logs: ssh ... 'docker compose -f $AFFINE_DIR/docker-compose.yml logs affine'"
+  if [ "$i" -eq 60 ]; then
+    warn "AFFiNE did not respond in 10 min — check logs:"
+    warn "  ssh -i $KEY_FILE ${EC2_USER}@${EIP} 'cd $AFFINE_DIR && docker compose logs --tail=50'"
     break
   fi
-  echo "  Attempt $i/36 — status: $STATUS. Waiting 5s..."
-  sleep 5
+  echo "  Attempt $i/60 — waiting 10s..."
+  sleep 10
 done
-
-# ── 8. Enable pgvector ────────────────────────────────────────────────────────
-info "Enabling pgvector extension in PostgreSQL..."
-sleep 5
-ssh $SSH_OPTS "$REMOTE" \
-  "docker exec affine_postgres psql -U affine -d affine -c 'CREATE EXTENSION IF NOT EXISTS vector;'" \
-  2>/dev/null || warn "pgvector may already exist — that's fine"
-ok "pgvector enabled"
 
 # ── 9. Print access info ──────────────────────────────────────────────────────
 info "================================================================"
