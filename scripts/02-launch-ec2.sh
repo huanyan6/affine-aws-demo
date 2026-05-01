@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# 02-launch-ec2.sh
+# 02-launch-ec2.sh  (v2.1)
 # Launches a t2.micro EC2 instance (Free Tier) and injects a user-data script
 # that automatically installs Docker, Docker Compose, Nginx, Certbot, and
 # clones the AFFiNE docker-compose config on first boot.
@@ -12,6 +12,19 @@ source "$SCRIPT_DIR/../config/bootstrap-outputs.env"
 
 info()  { echo -e "\n\033[1;36m[INFO]\033[0m $*"; }
 ok()    { echo -e "\033[1;32m[OK]\033[0m $*"; }
+
+# ── EC2 OS USERNAME ───────────────────────────────────────────────────────────
+echo ""
+echo "========================================================="
+echo " Step 0: Confirm the EC2 instance OS username"
+echo "========================================================="
+echo "  Amazon Linux 2023 → ec2-user  (this script's default)"
+echo "  Ubuntu            → ubuntu"
+echo "  RHEL / CentOS     → ec2-user or centos"
+echo ""
+read -rp "  Enter EC2 OS username [press Enter for 'ec2-user']: " INPUT_EC2_USER
+EC2_USER="${INPUT_EC2_USER:-ec2-user}"
+ok "EC2 OS username: $EC2_USER"
 
 # ── AMI: Latest Amazon Linux 2023 ─────────────────────────────────────────────
 info "Resolving latest Amazon Linux 2023 AMI in $REGION..."
@@ -40,7 +53,7 @@ dnf install -y git curl wget unzip python3-pip
 dnf install -y docker
 systemctl enable docker
 systemctl start docker
-usermod -aG docker ec2-user
+usermod -aG docker __EC2_USER__
 
 # 3. Docker Compose v2
 COMPOSE_VERSION="2.24.6"
@@ -57,12 +70,15 @@ pip3 install certbot certbot-nginx
 
 # 5. AFFiNE directory
 mkdir -p /opt/affine
-chown ec2-user:ec2-user /opt/affine
+chown __EC2_USER__:__EC2_USER__ /opt/affine
 
 echo "=== AFFiNE setup complete: $(date) ==="
 echo "=== Next: SSH in and run 03-configure-affine.sh ==="
 USERDATA
 )
+
+# Substitute the EC2 OS username into the user-data
+USER_DATA="${USER_DATA//__EC2_USER__/$EC2_USER}"
 
 # ── Launch instance ────────────────────────────────────────────────────────────
 info "Launching EC2 t2.micro..."
@@ -104,6 +120,7 @@ ok "Instance status checks passed"
 cat >> "$SCRIPT_DIR/../config/bootstrap-outputs.env" <<EOF
 
 # Added by 02-launch-ec2.sh
+EC2_USER=$EC2_USER
 AMI_ID=$AMI_ID
 INSTANCE_ID=$INSTANCE_ID
 EOF
@@ -112,7 +129,7 @@ info "================================================================"
 info "EC2 ready!  Public IP: $EIP"
 info ""
 info "Wait ~2 min for user-data to finish, then SSH:"
-info "  ssh -i $KEY_FILE ec2-user@$EIP"
+info "  ssh -i $KEY_FILE ${EC2_USER}@$EIP"
 info ""
 info "Next: copy config files and run 03-configure-affine.sh"
 info "================================================================"
