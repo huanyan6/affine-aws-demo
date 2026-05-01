@@ -13,18 +13,9 @@ source "$SCRIPT_DIR/../config/bootstrap-outputs.env"
 info()  { echo -e "\n\033[1;36m[INFO]\033[0m $*"; }
 ok()    { echo -e "\033[1;32m[OK]\033[0m $*"; }
 
-# ── EC2 OS USERNAME ───────────────────────────────────────────────────────────
-echo ""
-echo "========================================================="
-echo " Step 0: Confirm the EC2 instance OS username"
-echo "========================================================="
-echo "  Amazon Linux 2023 → ec2-user  (this script's default)"
-echo "  Ubuntu            → ubuntu"
-echo "  RHEL / CentOS     → ec2-user or centos"
-echo ""
-read -rp "  Enter EC2 OS username [press Enter for 'ec2-user']: " INPUT_EC2_USER
-EC2_USER="${INPUT_EC2_USER:-ec2-user}"
-ok "EC2 OS username: $EC2_USER"
+# EC2_USER is set in bootstrap-outputs.env by 01-aws-bootstrap.sh
+EC2_USER="${EC2_USER:-ec2-user}"
+ok "Using EC2 OS username: $EC2_USER  (set during bootstrap)"
 
 # ── AMI: Latest Amazon Linux 2023 ─────────────────────────────────────────────
 info "Resolving latest Amazon Linux 2023 AMI in $REGION..."
@@ -120,7 +111,6 @@ ok "Instance status checks passed"
 cat >> "$SCRIPT_DIR/../config/bootstrap-outputs.env" <<EOF
 
 # Added by 02-launch-ec2.sh
-EC2_USER=$EC2_USER
 AMI_ID=$AMI_ID
 INSTANCE_ID=$INSTANCE_ID
 EOF
