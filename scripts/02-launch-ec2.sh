@@ -38,7 +38,8 @@ echo "=== AFFiNE demo setup started: $(date) ==="
 
 # 1. System update
 dnf update -y
-dnf install -y git curl wget unzip python3-pip
+# curl-minimal is pre-installed on AL2023 and conflicts with full curl — omit it
+dnf install -y git wget unzip python3-pip
 
 # 2. Docker
 dnf install -y docker

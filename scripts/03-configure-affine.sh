@@ -29,7 +29,8 @@ done
 
 AFFINE_DIR="/opt/affine"
 EC2_USER="${EC2_USER:-ec2-user}"
-SSH_OPTS="-i $KEY_FILE -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes"
+# LogLevel=ERROR suppresses SSH client warnings (e.g. post-quantum key exchange noise)
+SSH_OPTS="-i $KEY_FILE -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes -o LogLevel=ERROR"
 REMOTE="${EC2_USER}@${EIP}"
 PUBLIC_HOST="${DOMAIN:-$EIP}"
 PROTOCOL="https"
@@ -53,16 +54,24 @@ done
 
 # ── 2. Wait for user-data (Docker/Nginx install) to complete ──────────────────
 info "Waiting for EC2 user-data setup to complete (installs Docker, Nginx)..."
-for i in $(seq 1 36); do
-  if ssh $SSH_OPTS "$REMOTE" "grep -q 'AFFiNE setup complete' /var/log/affine-setup.log 2>/dev/null"; then
+for i in $(seq 1 60); do
+  # Use sudo — the log is owned by root (user-data runs as root)
+  if ssh $SSH_OPTS "$REMOTE" "sudo grep -q 'AFFiNE setup complete' /var/log/affine-setup.log 2>/dev/null"; then
     ok "User-data complete"
     break
   fi
-  if [ "$i" -eq 36 ]; then
-    warn "User-data did not finish in 6 minutes — proceeding anyway (may fail)"
+  if [ "$i" -eq 60 ]; then
+    # Show last log lines to help diagnose failures
+    echo ""
+    warn "User-data did not finish in 10 minutes. Last log lines:"
+    ssh $SSH_OPTS "$REMOTE" "sudo tail -20 /var/log/affine-setup.log 2>/dev/null || echo '(log not found)'"
+    echo ""
+    read -rp "Continue anyway? [y/N]: " CONT
+    [ "${CONT,,}" = "y" ] || { echo "Aborted."; exit 1; }
     break
   fi
-  echo "  Attempt $i/36 — still running, waiting 10s..."
+  LAST=$(ssh $SSH_OPTS "$REMOTE" "sudo tail -1 /var/log/affine-setup.log 2>/dev/null || echo '(waiting for log...)'")
+  echo "  Attempt $i/60 — $LAST"
   sleep 10
 done
 
