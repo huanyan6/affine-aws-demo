@@ -115,6 +115,8 @@ ok "Security group: $SG_ID  (SSH allowed from $MY_IP only)"
 # ── 6. Key Pair ───────────────────────────────────────────────────────────────
 info "Creating SSH key pair..."
 KEY_FILE="${LOCAL_HOME}/.ssh/${KEY_NAME}.pem"
+mkdir -p "${LOCAL_HOME}/.ssh"
+chmod 700 "${LOCAL_HOME}/.ssh"
 if [ -f "$KEY_FILE" ]; then
   warn "Key file already exists at $KEY_FILE — skipping key creation"
 else
