@@ -1,0 +1,21 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is git-ignored so it won't be committed.
+
+# AWS region — change to your preferred region
+# aws_region = "ap-southeast-2"
+
+# Optional: custom domain for Let's Encrypt HTTPS.
+# Leave commented out to use the Elastic IP with a self-signed cert.
+# affine_domain = "affine.example.com"
+
+# Optional: restrict SSH to a specific CIDR. Auto-detects your public IP if omitted.
+# ssh_allowed_cidr = "203.0.113.42/32"
+
+# EC2 instance type — t2.micro is free-tier eligible
+# ec2_instance_type = "t2.micro"
+
+# EC2 OS username — ec2-user for Amazon Linux 2023
+# ec2_user = "ec2-user"
+
+# Where to write the generated SSH private key locally
+# local_ssh_key_path = "~/.ssh/affine-demo-key.pem"
