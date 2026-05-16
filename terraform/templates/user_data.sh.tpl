@@ -46,8 +46,6 @@ AFFINE_SECRET=${affine_secret}
 STORAGE_PROVIDER=aws-s3
 AWS_S3_BUCKET=${s3_bucket}
 AWS_S3_REGION=${s3_region}
-AWS_ACCESS_KEY_ID=${aws_access_key}
-AWS_SECRET_ACCESS_KEY=${aws_secret_key}
 TELEMETRY_ENABLE=false
 AFFINE_INDEXER_ENABLED=false
 ENVEOF
