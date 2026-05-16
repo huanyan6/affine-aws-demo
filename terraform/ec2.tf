@@ -54,6 +54,7 @@ resource "aws_instance" "this" {
   key_name               = aws_key_pair.this.key_name
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.this.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
 
   user_data = templatefile("${path.module}/templates/user_data.sh.tpl", {
     ec2_user          = var.ec2_user
@@ -63,8 +64,6 @@ resource "aws_instance" "this" {
     affine_secret     = random_password.affine_secret.result
     s3_bucket         = local.s3_bucket
     s3_region         = var.aws_region
-    aws_access_key    = aws_iam_access_key.this.id
-    aws_secret_key    = aws_iam_access_key.this.secret
     public_host       = local.public_host
     nginx_server_name = local.nginx_server_name
     affine_domain     = var.affine_domain
@@ -72,9 +71,12 @@ resource "aws_instance" "this" {
 
   user_data_replace_on_change = true
 
+  # hop_limit=2 lets Docker containers reach the IMDSv2 endpoint
+  # (container → bridge → host counts as 2 hops)
   metadata_options {
-    http_tokens   = "required"
-    http_endpoint = "enabled"
+    http_tokens                 = "required"
+    http_endpoint               = "enabled"
+    http_put_response_hop_limit = 2
   }
 
   root_block_device {

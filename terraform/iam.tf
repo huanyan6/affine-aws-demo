@@ -22,28 +22,29 @@ resource "aws_iam_policy" "affine_s3" {
   })
 }
 
-resource "aws_iam_group" "this" {
-  name = "${var.project}-group"
+# EC2 instance role — AFFiNE uses IMDS credentials to access S3.
+# No static access keys are generated or embedded in user-data.
+resource "aws_iam_role" "ec2" {
+  name = "${var.project}-ec2-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = { Project = var.project }
 }
 
-resource "aws_iam_group_policy_attachment" "this" {
-  group      = aws_iam_group.this.name
+resource "aws_iam_role_policy_attachment" "ec2_s3" {
+  role       = aws_iam_role.ec2.name
   policy_arn = aws_iam_policy.affine_s3.arn
 }
 
-resource "aws_iam_user" "this" {
-  name = "${var.project}-deployer"
-
-  tags = {
-    Project = var.project
-  }
-}
-
-resource "aws_iam_user_group_membership" "this" {
-  user   = aws_iam_user.this.name
-  groups = [aws_iam_group.this.name]
-}
-
-resource "aws_iam_access_key" "this" {
-  user = aws_iam_user.this.name
+resource "aws_iam_instance_profile" "ec2" {
+  name = "${var.project}-ec2-profile"
+  role = aws_iam_role.ec2.name
 }
