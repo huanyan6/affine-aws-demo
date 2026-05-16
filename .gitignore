@@ -2,6 +2,15 @@
 config/bootstrap-outputs.env
 config/*.env
 
+# Terraform state and local provider cache
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/terraform.tfvars
+terraform/*.auto.tfvars
+
 # OS / editor noise
 .DS_Store
 *.swp

@@ -1,0 +1,12 @@
+# Terraform state — never commit
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.backup
+
+# Local provider cache
+.terraform/
+
+# Personal variable overrides (copy terraform.tfvars.example → terraform.tfvars to use)
+terraform.tfvars
+*.auto.tfvars
